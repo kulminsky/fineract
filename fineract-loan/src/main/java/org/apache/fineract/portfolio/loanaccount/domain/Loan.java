@@ -2665,12 +2665,6 @@ public class Loan extends AbstractAuditableWithUTCDateTimeCustom<Long> {
             final LoanLifecycleStateMachine loanLifecycleStateMachine, final LoanTransaction transactionForAdjustment,
             final List<Long> existingTransactionIds, final List<Long> existingReversedTransactionIds,
             final ScheduleGeneratorDTO scheduleGeneratorDTO, final ExternalId reversalExternalId) {
-        HolidayDetailDTO holidayDetailDTO = scheduleGeneratorDTO.getHolidayDetailDTO();
-        validateActivityNotBeforeLastTransactionDate(LoanEvent.LOAN_REPAYMENT_OR_WAIVER, transactionForAdjustment.getTransactionDate());
-        validateRepaymentDateIsOnHoliday(newTransactionDetail.getTransactionDate(), holidayDetailDTO.isAllowTransactionsOnHoliday(),
-                holidayDetailDTO.getHolidays());
-        validateRepaymentDateIsOnNonWorkingDay(newTransactionDetail.getTransactionDate(), holidayDetailDTO.getWorkingDays(),
-                holidayDetailDTO.isAllowTransactionsOnNonWorkingDay());
 
         ChangedTransactionDetail changedTransactionDetail = null;
 
@@ -5372,16 +5366,12 @@ public class Loan extends AbstractAuditableWithUTCDateTimeCustom<Long> {
         return isForeClosure;
     }
 
-    public Set<LoanTermVariations> getActiveLoanTermVariations() {
-        Set<LoanTermVariations> retData = new HashSet<>();
-        if (this.loanTermVariations != null && !this.loanTermVariations.isEmpty()) {
-            for (LoanTermVariations loanTermVariations : this.loanTermVariations) {
-                if (loanTermVariations.isActive()) {
-                    retData.add(loanTermVariations);
-                }
-            }
+    public List<LoanTermVariations> getActiveLoanTermVariations() {
+        if (this.loanTermVariations == null) {
+            return new ArrayList<>();
         }
-        return !retData.isEmpty() ? retData : null;
+
+        return this.loanTermVariations.stream().filter(LoanTermVariations::isActive).collect(Collectors.toList());
     }
 
     public boolean isTopup() {
