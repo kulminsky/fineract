@@ -928,6 +928,62 @@ class ProgressiveEMICalculatorTest {
         checkPeriod(interestSchedule, 5, 0, 16.89, 0.003950916667, 0.07, 16.82, 0.0);
     }
 
+    @Test
+    public void testPrepaymentAfterTwoRepayments() {
+        final MathContext mc = MoneyHelper.getMathContext();
+        final List<LoanScheduleModelRepaymentPeriod> expectedRepaymentPeriods = new ArrayList<>();
+
+        // We set 6 periods with monthly payments
+        expectedRepaymentPeriods.add(repayment(1, LocalDate.of(2024, 1, 1), LocalDate.of(2024, 2, 1)));
+        expectedRepaymentPeriods.add(repayment(2, LocalDate.of(2024, 2, 1), LocalDate.of(2024, 3, 1)));
+        expectedRepaymentPeriods.add(repayment(3, LocalDate.of(2024, 3, 1), LocalDate.of(2024, 4, 1)));
+        expectedRepaymentPeriods.add(repayment(4, LocalDate.of(2024, 4, 1), LocalDate.of(2024, 5, 1)));
+        expectedRepaymentPeriods.add(repayment(5, LocalDate.of(2024, 5, 1), LocalDate.of(2024, 6, 1)));
+        expectedRepaymentPeriods.add(repayment(6, LocalDate.of(2024, 6, 1), LocalDate.of(2024, 7, 1)));
+
+        // Setting the interest rate
+        final BigDecimal interestRate = new BigDecimal("7.5");
+        final Integer installmentAmountInMultiplesOf = null;
+
+        // Setting up a loan product
+        Mockito.when(loanProductRelatedDetail.getNominalInterestRatePerPeriod()).thenReturn(interestRate);
+        Mockito.when(loanProductRelatedDetail.getAnnualNominalInterestRate()).thenReturn(interestRate);
+        Mockito.when(loanProductRelatedDetail.getDaysInYearType()).thenReturn(DaysInYearType.DAYS_360.getValue());
+        Mockito.when(loanProductRelatedDetail.getDaysInMonthType()).thenReturn(DaysInMonthType.DAYS_30.getValue());
+        Mockito.when(loanProductRelatedDetail.getRepaymentPeriodFrequencyType()).thenReturn(PeriodFrequencyType.MONTHS);
+        Mockito.when(loanProductRelatedDetail.getRepayEvery()).thenReturn(1);
+        Mockito.when(loanProductRelatedDetail.getCurrency()).thenReturn(monetaryCurrency);
+
+        // Generate a payment schedule
+        final ProgressiveLoanInterestScheduleModel interestSchedule = emiCalculator.generateInterestScheduleModel(expectedRepaymentPeriods,
+                loanProductRelatedDetail, installmentAmountInMultiplesOf, mc);
+
+        // We issue 1000 USD of credit
+        final Money disbursedAmount = Money.of(monetaryCurrency, BigDecimal.valueOf(1000));
+        emiCalculator.addDisbursement(interestSchedule, LocalDate.of(2024, 1, 1), disbursedAmount);
+
+        // We check the initial state (balance, interest payments)
+        checkDisbursementOnPeriod(interestSchedule, 0, disbursedAmount);
+        checkPeriod(interestSchedule, 0, 0, 200.0, 0.005833333333, 50.0, 150.0, 850.0);
+        checkPeriod(interestSchedule, 1, 0, 200.0, 0.005833333333, 40.0, 160.0, 690.0);
+
+        // We are making a partial early repayment of 100 USD after two regular payments (as of March 1, 2024)
+        final Money prepaymentAmount = Money.of(monetaryCurrency, BigDecimal.valueOf(100));
+        emiCalculator.addBalanceCorrection(interestSchedule, LocalDate.of(2024, 3, 1), prepaymentAmount.negated());
+
+        // We check that the interest and principal are recalculated correctly
+        checkPeriod(interestSchedule, 2, 0, 200.0, 0.005833333333, 30.0, 170.0, 520.0);
+        checkPeriod(interestSchedule, 3, 0, 200.0, 0.005833333333, 20.0, 180.0, 340.0);
+        checkPeriod(interestSchedule, 4, 0, 200.0, 0.005833333333, 10.0, 190.0, 150.0);
+
+        // We check that the remaining balance is correctly recalculated after early repayment
+        ProgressiveLoanInterestRepaymentModel repaymentDetails = emiCalculator
+                .getPayableDetails(interestSchedule, LocalDate.of(2024, 3, 1), LocalDate.of(2024, 3, 1)).get();
+        Assertions.assertEquals(620.0, toDouble(repaymentDetails.getOutstandingBalance().getAmount()));
+        Assertions.assertEquals(100.0, toDouble(repaymentDetails.getPrincipalDue().getAmount()));
+        Assertions.assertEquals(20.0, toDouble(repaymentDetails.getInterestDue().getAmount()));
+    }
+
     //
     // @Test
     // public void testEMICalculation_Principal1000_NoInterest_repayEvery1Month() {
