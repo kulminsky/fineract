@@ -3119,6 +3119,85 @@ public class ClientLoanIntegrationTest extends BaseLoanIntegrationTest {
     }
 
     @Test
+    public void testLoanPrePayment() {
+        final Integer clientID = ClientHelper.createClient(REQUEST_SPEC, RESPONSE_SPEC);
+        ClientHelper.verifyClientCreatedOnServer(REQUEST_SPEC, RESPONSE_SPEC, clientID);
+
+        // Create a loan product
+        Integer loanProductId = createLoanProduct(false, NONE);
+        Integer collateralId = CollateralManagementHelper.createCollateralProduct(REQUEST_SPEC, RESPONSE_SPEC);
+        Integer clientCollateralId = CollateralManagementHelper.createClientCollateral(REQUEST_SPEC, RESPONSE_SPEC,
+                String.valueOf(clientID), collateralId);
+        List<HashMap> collaterals = List.of(collaterals(clientCollateralId, BigDecimal.ONE));
+
+        // Apply for a loan
+        final String disbursementDate = "1 January 2024";
+        final String interestRate = "7";
+        final Integer loanID = applyForLoanApplication(clientID, loanProductId, disbursementDate, interestRate, null, null, "1000",
+                collaterals);
+        Assertions.assertNotNull(loanID);
+
+        // Check loan status
+        HashMap loanStatusHashMap = LoanStatusChecker.getStatusOfLoan(REQUEST_SPEC, RESPONSE_SPEC, loanID);
+        LoanStatusChecker.verifyLoanIsPending(loanStatusHashMap);
+
+        // Approve the loan
+        LOG.info("-----------------------------------APPROVE LOAN-----------------------------------------");
+        loanStatusHashMap = LOAN_TRANSACTION_HELPER.approveLoan(disbursementDate, loanID);
+        LoanStatusChecker.verifyLoanIsApproved(loanStatusHashMap);
+        LoanStatusChecker.verifyLoanIsWaitingForDisbursal(loanStatusHashMap);
+
+        // Disburse the loan
+        LOG.info("-------------------------------DISBURSE LOAN-------------------------------------------");
+        String loanDetails = LOAN_TRANSACTION_HELPER.getLoanDetails(REQUEST_SPEC, RESPONSE_SPEC, loanID);
+        loanStatusHashMap = LOAN_TRANSACTION_HELPER.disburseLoanWithNetDisbursalAmount(disbursementDate, loanID,
+                JsonPath.from(loanDetails).get("netDisbursalAmount").toString());
+        LoanStatusChecker.verifyLoanIsActive(loanStatusHashMap);
+
+        // Retrieve the prepayment amount
+        LOG.info("------------------------GET PREPAYMENT AMOUNT-----------------------------------------");
+        HashMap<String, Object> prepayAmount = loanTransactionHelper.getPrepayAmount(REQUEST_SPEC, RESPONSE_SPEC, loanID);
+        Assertions.assertNotNull(prepayAmount);
+
+        // Extract the principal and interest portions
+        Float totalPrepayAmount = (Float) prepayAmount.get("amount");
+        Float principalAmount = (Float) prepayAmount.get("principalPortion");
+        Float interestAmount = (Float) prepayAmount.get("interestPortion");
+
+        // Expected values
+        Float expectedTotalPrepayAmount = 1070.0f;
+        Float expectedPrincipal = 1000.0f;
+        Float expectedInterest = 70.0f;
+
+        // Validate calculations
+        validateNumberForEqual(String.valueOf(expectedTotalPrepayAmount), String.valueOf(totalPrepayAmount));
+        validateNumberForEqual(String.valueOf(expectedPrincipal), String.valueOf(principalAmount));
+        validateNumberForEqual(String.valueOf(expectedInterest), String.valueOf(interestAmount));
+
+        // Make prepayment
+        LOG.info("------------------------MAKE PREPAYMENT-----------------------------------------------");
+        Float repaymentAmount = totalPrepayAmount;
+        LOAN_TRANSACTION_HELPER.makeRepayment(disbursementDate, repaymentAmount, loanID);
+
+        // Recheck the prepayment amount
+        LOG.info("------------------------RECHECK PREPAYMENT AMOUNT--------------------------------------");
+        HashMap<String, Object> postPrepayAmount = loanTransactionHelper.getPrepayAmount(REQUEST_SPEC, RESPONSE_SPEC, loanID);
+        Assertions.assertNotNull(postPrepayAmount);
+
+        // Verify that the principal and interest portions are zero
+        Float postPrincipalAmount = (Float) postPrepayAmount.get("principalPortion");
+        Float postInterestAmount = (Float) postPrepayAmount.get("interestPortion");
+
+        validateNumberForEqual("0.0", String.valueOf(postPrincipalAmount));
+        validateNumberForEqual("0.0", String.valueOf(postInterestAmount));
+
+        // Check the loan status after repayment
+        LOG.info("------------------------CHECK LOAN STATUS---------------------------------------------");
+        loanStatusHashMap = LoanStatusChecker.getStatusOfLoan(REQUEST_SPEC, RESPONSE_SPEC, loanID);
+        LoanStatusChecker.verifyLoanAccountIsClosed(loanStatusHashMap);
+    }
+
+    @Test
     public void testLoanScheduleWithInterestRecalculation_WITH_REST_SAME_AS_REPAYMENT_INTEREST_COMPOUND_NONE_STRATEGY_REDUCE_EMI() {
 
         DateFormat dateFormat = new SimpleDateFormat(DATETIME_PATTERN, Locale.US);
@@ -7213,6 +7292,26 @@ public class ClientLoanIntegrationTest extends BaseLoanIntegrationTest {
                 .withInterestCalculationPeriodTypeSameAsRepaymentPeriod() //
                 .withExpectedDisbursementDate("20 September 2011") //
                 .withSubmittedOnDate("20 September 2011") //
+                .withCollaterals(collaterals).withCharges(charges).build(clientID.toString(), loanProductID.toString(), savingsId);
+        return LOAN_TRANSACTION_HELPER.getLoanId(loanApplicationJSON);
+    }
+
+    private Integer applyForLoanApplication(final Integer clientID, final Integer loanProductID, String disbursementDate,
+            String interestRate, List<HashMap> charges, final String savingsId, String principal, List<HashMap> collaterals) {
+        LOG.info("--------------------------------APPLYING FOR LOAN APPLICATION--------------------------------");
+        final String loanApplicationJSON = new LoanApplicationTestBuilder() //
+                .withPrincipal(principal) //
+                .withLoanTermFrequency("1") //
+                .withLoanTermFrequencyAsMonths() //
+                .withNumberOfRepayments("1") //
+                .withRepaymentEveryAfter("1") //
+                .withRepaymentFrequencyTypeAsMonths() //
+                .withInterestRatePerPeriod(interestRate) //
+                .withAmortizationTypeAsEqualInstallments() //
+                .withInterestTypeAsDecliningBalance() //
+                .withInterestCalculationPeriodTypeSameAsRepaymentPeriod() //
+                .withExpectedDisbursementDate(disbursementDate) //
+                .withSubmittedOnDate(disbursementDate) //
                 .withCollaterals(collaterals).withCharges(charges).build(clientID.toString(), loanProductID.toString(), savingsId);
         return LOAN_TRANSACTION_HELPER.getLoanId(loanApplicationJSON);
     }
